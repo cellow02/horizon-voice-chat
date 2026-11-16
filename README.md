@@ -139,8 +139,9 @@ Port, Reichweiten und Keep-Alive gelten nach einem Neustart des Servers.
 - **Zuschauer-Sonderregeln** und vom Server erzwungenes Stummschalten.
 - **SRV-Einträge:** Der Client schickt Sprache an den Hostnamen, mit dem du beigetreten bist. Zeigt
   ein SRV-Eintrag auf einen anderen Rechner, muss der Server `voice_host` setzen.
-- **Ältere Protokollversionen:** Nur Version 21. Ändert Simple Voice Chat die Version, muss dieser
-  Mod nachziehen.
+- **Ältere Protokollversionen:** Der Server nimmt Clients mit Version 21 und Version 20 (Simple Voice
+  Chat 2.6.x) an. Der Client spricht nur Version 21, braucht also einen Server mit Version 21. Bei
+  Clients mit Version 20 sehen andere nicht, ob sie den Sprachchat ausgeschaltet haben.
 
 ## Testen
 

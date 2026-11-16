@@ -18,7 +18,7 @@ use mod_api::{
     RegistrationContext, ServerHost, ServerStartedEvent, ServerStoppingEvent, ServerTickEvent,
     ServerTickPhase, Text,
 };
-use protocol::{COMPATIBILITY_VERSION, Codec, PlayerState, SecretMessage, channel};
+use protocol::{COMPATIBILITY_VERSION, LEGACY_VERSION, Codec, PlayerState, SecretMessage, channel};
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
@@ -36,6 +36,8 @@ struct State {
     /// Players whose client asked for a secret with the right protocol version. Only they
     /// are sent voice chat plugin messages.
     compatible: HashSet<u128>,
+    /// Those of them who speak protocol 20 and get the older message formats.
+    v20: HashSet<u128>,
 }
 
 #[derive(Default)]
@@ -63,7 +65,16 @@ impl State {
 
     fn broadcast_state(&self, host: &mut dyn ServerHost, uuid: u128) {
         if let Some(state) = self.states.get(&uuid) {
-            self.broadcast(host, channel::STATE, &state.encode());
+            for uuid in &self.compatible {
+                let body = if self.v20.contains(uuid) {
+                    state.encode_v20()
+                } else {
+                    state.encode()
+                };
+                if let Some(player) = host.player(*uuid) {
+                    send(host, player, channel::STATE, body);
+                }
+            }
         }
     }
 
@@ -94,7 +105,12 @@ impl State {
             },
             allow_recording: self.config.allow_recording,
         };
-        send(host, player, channel::SECRET, message.encode());
+        let body = if self.v20.contains(&uuid) {
+            message.encode_v20()
+        } else {
+            message.encode()
+        };
+        send(host, player, channel::SECRET, body);
     }
 
     fn start(&mut self, dedicated: bool) {
@@ -150,7 +166,7 @@ impl IPayloadHandler for RequestSecret {
         let player = context.player().map_err(failed)?;
         let host = context.server_host().map_err(failed)?;
         let uuid = player.uuid();
-        if version != COMPATIBILITY_VERSION {
+        if version != COMPATIBILITY_VERSION && version != LEGACY_VERSION {
             log::warn!(
                 "A client has an incompatible voice chat version (server {COMPATIBILITY_VERSION}, client {version})"
             );
@@ -166,10 +182,18 @@ impl IPayloadHandler for RequestSecret {
         if state.server.is_none() {
             return Ok(());
         }
+        if version == LEGACY_VERSION {
+            state.v20.insert(uuid);
+        }
         if state.compatible.insert(uuid) {
             // The newcomer learns everyone's state before its own connection starts.
             let states: Vec<PlayerState> = state.states.values().cloned().collect();
-            send(host, player, channel::STATES, protocol::encode_states(&states));
+            let body = if version == LEGACY_VERSION {
+                protocol::encode_states_v20(&states)
+            } else {
+                protocol::encode_states(&states)
+            };
+            send(host, player, channel::STATES, body);
         }
         state.send_secret(host, uuid);
         Ok(())
@@ -264,6 +288,7 @@ impl Hooks for Mod {
         state.server = None;
         state.states.clear();
         state.compatible.clear();
+        state.v20.clear();
     }
 
     fn player_logged_in(&self, host: &mut dyn ServerHost, event: &mut PlayerLoggedInEvent<'_>) {
@@ -280,6 +305,7 @@ impl Hooks for Mod {
             server.remove_player(event.player);
         }
         state.compatible.remove(&event.player);
+        state.v20.remove(&event.player);
         if state.states.remove(&event.player).is_some() {
             state.broadcast(
                 host,

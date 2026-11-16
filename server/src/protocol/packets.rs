@@ -331,6 +331,23 @@ impl SecretMessage {
         w.finish()
     }
 
+    /// The same message for a client that speaks protocol 20: no connection id, since those
+    /// clients put their player UUID in front of their datagrams.
+    pub fn encode_v20(&self) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.raw(&self.secret.0)
+            .i32(self.port)
+            .uuid(self.player)
+            .u8(self.codec as u8)
+            .i32(self.mtu_size)
+            .f64(self.distance)
+            .i32(self.keep_alive)
+            .bool(self.groups_enabled)
+            .string(&self.voice_host)
+            .bool(self.allow_recording);
+        w.finish()
+    }
+
     pub fn decode(body: &[u8]) -> Result<Self, WireError> {
         let mut r = Reader::new(body);
         Ok(Self {
@@ -436,6 +453,24 @@ impl PlayerState {
         }
     }
 
+    /// The state as protocol 20 writes it: two flags as booleans, no mute flags.
+    pub fn write_v20(&self, w: &mut Writer) {
+        w.bool(self.disabled || self.force_disabled)
+            .bool(self.disconnected)
+            .uuid(self.uuid)
+            .string(&self.name)
+            .bool(self.group.is_some());
+        if let Some(group) = self.group {
+            w.uuid(group);
+        }
+    }
+
+    pub fn encode_v20(&self) -> Vec<u8> {
+        let mut w = Writer::new();
+        self.write_v20(&mut w);
+        w.finish()
+    }
+
     pub fn read(r: &mut Reader<'_>) -> Result<Self, WireError> {
         let flags = r.u8()?;
         let uuid = r.uuid()?;
@@ -470,6 +505,16 @@ pub fn encode_states(states: &[PlayerState]) -> Vec<u8> {
     w.i32(states.len() as i32);
     for state in states {
         state.write(&mut w);
+    }
+    w.finish()
+}
+
+/// Every player's state for a client that speaks protocol 20.
+pub fn encode_states_v20(states: &[PlayerState]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.i32(states.len() as i32);
+    for state in states {
+        state.write_v20(&mut w);
     }
     w.finish()
 }
