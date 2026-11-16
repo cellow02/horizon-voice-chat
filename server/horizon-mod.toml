@@ -1,0 +1,15 @@
+id = "horizon_voice_server"
+name = "Horizon Voice Chat (Server)"
+version = "0.1.0"
+description = "Proximity voice chat server. Speaks the Simple Voice Chat protocol (version 21), so Horizon players with Horizon Voice Chat and Java players with Simple Voice Chat hear each other."
+authors = ["cellow02"]
+# A native mod: Rust in src/, compiled by the launcher against the game build [native] pins.
+api = "0.2"
+# Only the server needs it: players joining are never asked for it, so vanilla clients can join.
+side = "server"
+capabilities = ["registries"]
+
+[native]
+game = "26.3"
+horizon = "c07bfa76e71e8db9e84a7e61832a8fb898718e81"
+mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

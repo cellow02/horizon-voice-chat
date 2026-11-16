@@ -1,0 +1,19 @@
+[package]
+name = "mod-horizon-voice"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+# The pinned SDK's API crate, fetched into .horizon/sdk/ by any `cargo horizon-mod` command (the
+# launcher builds against its own copy of the same build).
+horizon-mod-api = { path = ".horizon/sdk/api/crates/horizon-mod-api" }
+log = "0.4"
+# Microphone and speakers. The same version the game uses, so both share one audio backend.
+cpal = "=0.16.0"
+# Opus: libopus translated to Rust, so players need no C compiler.
+unsafe-libopus = "=0.2.0"
+# Packet encryption (AES-128-GCM).
+aes-gcm = "=0.10.3"
+getrandom = "=0.2.17"

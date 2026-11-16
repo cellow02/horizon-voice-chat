@@ -1,0 +1,22 @@
+{
+  "horizon_voice.key.category": "Voice Chat",
+  "horizon_voice.key.push_to_talk": "Push to Talk",
+  "horizon_voice.key.whisper": "Whisper (hold while talking)",
+  "horizon_voice.key.mute": "Mute Microphone",
+  "horizon_voice.key.disable": "Turn Voice Chat Off/On",
+  "horizon_voice.setting.activation": "Microphone",
+  "horizon_voice.setting.activation.tooltip": "Push to talk sends while the key is held. Voice activation sends whenever you speak louder than the threshold.",
+  "horizon_voice.setting.activation.push_to_talk": "Push to Talk",
+  "horizon_voice.setting.activation.voice": "Voice Activation",
+  "horizon_voice.setting.threshold": "Voice Activation Threshold (dB)",
+  "horizon_voice.setting.threshold.tooltip": "How loud you must speak for voice activation. Closer to 0 needs a louder voice.",
+  "horizon_voice.setting.microphone_volume": "Microphone Volume",
+  "horizon_voice.setting.output_volume": "Voice Chat Volume",
+  "horizon_voice.setting.hud": "Show Voice Chat on the HUD",
+  "horizon_voice.hud.connecting": "Voice chat: connecting...",
+  "horizon_voice.hud.no_microphone": "Voice chat: no microphone",
+  "horizon_voice.hud.muted": "Microphone muted",
+  "horizon_voice.hud.disabled": "Voice chat off",
+  "horizon_voice.hud.talking": "Talking",
+  "horizon_voice.hud.whispering": "Whispering"
+}

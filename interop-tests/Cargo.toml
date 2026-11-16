@@ -1,0 +1,15 @@
+# Runs the client's and the server's network code against each other, without the game.
+# Not a mod: `cargo test` here needs no Horizon SDK.
+[package]
+name = "interop-tests"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+log = "0.4"
+aes-gcm = "=0.10.3"
+getrandom = "=0.2.17"
+hmac = "=0.12.1"
+sha2 = "=0.10.9"

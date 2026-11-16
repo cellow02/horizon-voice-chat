@@ -1,0 +1,22 @@
+{
+  "horizon_voice.key.category": "Sprachchat",
+  "horizon_voice.key.push_to_talk": "Push-to-Talk",
+  "horizon_voice.key.whisper": "Flüstern (beim Sprechen halten)",
+  "horizon_voice.key.mute": "Mikrofon stummschalten",
+  "horizon_voice.key.disable": "Sprachchat aus-/einschalten",
+  "horizon_voice.setting.activation": "Mikrofon",
+  "horizon_voice.setting.activation.tooltip": "Push-to-Talk sendet, solange die Taste gehalten wird. Sprachaktivierung sendet, sobald du lauter als der Schwellwert sprichst.",
+  "horizon_voice.setting.activation.push_to_talk": "Push-to-Talk",
+  "horizon_voice.setting.activation.voice": "Sprachaktivierung",
+  "horizon_voice.setting.threshold": "Schwellwert der Sprachaktivierung (dB)",
+  "horizon_voice.setting.threshold.tooltip": "Wie laut du für die Sprachaktivierung sprechen musst. Näher an 0 braucht eine lautere Stimme.",
+  "horizon_voice.setting.microphone_volume": "Mikrofonlautstärke",
+  "horizon_voice.setting.output_volume": "Lautstärke des Sprachchats",
+  "horizon_voice.setting.hud": "Sprachchat im HUD anzeigen",
+  "horizon_voice.hud.connecting": "Sprachchat: verbinde...",
+  "horizon_voice.hud.no_microphone": "Sprachchat: kein Mikrofon",
+  "horizon_voice.hud.muted": "Mikrofon stumm",
+  "horizon_voice.hud.disabled": "Sprachchat aus",
+  "horizon_voice.hud.talking": "Du sprichst",
+  "horizon_voice.hud.whispering": "Du flüsterst"
+}

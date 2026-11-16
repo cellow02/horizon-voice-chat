@@ -1,0 +1,16 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The protocol copies in both mods match shared/protocol
+        run: tools/sync-protocol.sh --check
+      - name: Protocol, client and server network code against each other
+        run: cargo test --manifest-path interop-tests/Cargo.toml
