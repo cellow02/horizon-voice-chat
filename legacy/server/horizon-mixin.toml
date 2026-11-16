@@ -1,0 +1,13 @@
+# Horizon Voice Chat, server side, for Horizon's older mod API (the Nightly of 2026-11-13).
+# For Horizon builds with the mod SDK (mod API 0.2) use ../../server instead.
+# Build a server engine with
+# `horizon-launcher native-build <this folder> --server-output DIR --version TAG --trust-native-code`.
+[mod]
+id = "horizon_voice_server"
+version = "0.1.0"
+
+[compatibility]
+horizon_revision = "9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0"
+
+[api]
+path = "api"

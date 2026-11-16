@@ -8,6 +8,7 @@
 //! into both mods, because a Horizon native mod may not reference files outside its folder.
 
 pub mod crypto;
+mod gcm;
 pub mod packets;
 pub mod wire;
 

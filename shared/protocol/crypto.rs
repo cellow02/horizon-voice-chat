@@ -1,7 +1,6 @@
 //! Packet encryption: AES-128-GCM with a random 12-byte IV in front of the ciphertext.
 
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes128Gcm, Nonce};
+use super::gcm;
 
 /// Bytes of the per-connection key.
 pub const SECRET_SIZE: usize = 16;
@@ -43,12 +42,9 @@ impl Secret {
 
     /// IV, then ciphertext and tag.
     pub fn encrypt(&self, plain: &[u8]) -> Vec<u8> {
-        let cipher = Aes128Gcm::new_from_slice(&self.0).expect("the key is 16 bytes");
         let mut iv = [0u8; IV_SIZE];
         random_bytes(&mut iv);
-        let sealed = cipher
-            .encrypt(Nonce::from_slice(&iv), plain)
-            .expect("a packet is far below the GCM length limit");
+        let sealed = gcm::seal(&self.0, &iv, plain);
         let mut out = Vec::with_capacity(IV_SIZE + sealed.len());
         out.extend_from_slice(&iv);
         out.extend_from_slice(&sealed);
@@ -61,8 +57,7 @@ impl Secret {
             return None;
         }
         let (iv, sealed) = payload.split_at(IV_SIZE);
-        let cipher = Aes128Gcm::new_from_slice(&self.0).ok()?;
-        cipher.decrypt(Nonce::from_slice(iv), sealed).ok()
+        gcm::open(&self.0, iv.try_into().ok()?, sealed)
     }
 }
 

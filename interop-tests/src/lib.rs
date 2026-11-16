@@ -11,6 +11,93 @@ pub mod client_net;
 #[path = "../../server/src/udp.rs"]
 pub mod server_udp;
 
+/// AES-GCM as the mods for the older mod API do it.
+#[path = "../../shared/legacy/gcm.rs"]
+pub mod legacy_gcm;
+
+/// AES-GCM as the other mods do it (the same file as `protocol::gcm`, which is private).
+#[path = "../../shared/protocol/gcm.rs"]
+pub mod crate_gcm;
+
+/// Opus through libopus, as the mods for the mod SDK use it.
+#[path = "../../client/src/codec.rs"]
+pub mod codec;
+
+/// Opus through rusty-opus, as the mods for the older mod API use it.
+#[path = "../../legacy/client/api/src/codec.rs"]
+pub mod legacy_codec;
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::protocol::{Codec, FRAME_SIZE, SAMPLE_RATE};
+    use super::{codec, crate_gcm, legacy_codec, legacy_gcm};
+
+    /// Both AES-GCM implementations produce the same bytes and open each other's packets,
+    /// for every length around the 16-byte block size.
+    #[test]
+    fn the_legacy_aes_gcm_matches_the_aes_gcm_crate() {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut random = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        };
+        for len in (0..70).chain([255, 256, 1275, 2000]) {
+            let key: [u8; 16] = std::array::from_fn(|_| random());
+            let iv: [u8; 12] = std::array::from_fn(|_| random());
+            let plain: Vec<u8> = (0..len).map(|_| random()).collect();
+            let sealed = legacy_gcm::seal(&key, &iv, &plain);
+            assert_eq!(sealed, crate_gcm::seal(&key, &iv, &plain), "length {len}");
+            assert_eq!(legacy_gcm::open(&key, &iv, &sealed), Some(plain.clone()));
+            assert_eq!(crate_gcm::open(&key, &iv, &sealed), Some(plain));
+            for at in [0, sealed.len() / 2, sealed.len() - 1] {
+                let mut changed = sealed.clone();
+                changed[at] ^= 0x40;
+                assert_eq!(legacy_gcm::open(&key, &iv, &changed), None);
+            }
+            assert_eq!(legacy_gcm::open(&key, &iv, &sealed[..sealed.len().min(15)]), None);
+        }
+    }
+
+    fn tone(frame: usize) -> [f32; FRAME_SIZE] {
+        std::array::from_fn(|i| {
+            let t = (frame * FRAME_SIZE + i) as f32 / SAMPLE_RATE as f32;
+            (t * 440.0 * std::f32::consts::TAU).sin() * 0.5
+        })
+    }
+
+    fn rms(samples: &[f32]) -> f32 {
+        (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+    }
+
+    /// Speech encoded by either Opus implementation plays in the other, in every codec mode a
+    /// server can ask for. Simple Voice Chat itself uses libopus.
+    #[test]
+    fn both_opus_implementations_understand_each_other() {
+        for mode in [Codec::Voip, Codec::Audio, Codec::RestrictedLowDelay] {
+            let mut rusty_encoder = legacy_codec::Encoder::new(mode).unwrap();
+            let mut libopus_encoder = codec::Encoder::new(mode).unwrap();
+            let mut rusty_decoder = legacy_codec::Decoder::new().unwrap();
+            let mut libopus_decoder = codec::Decoder::new().unwrap();
+            let (mut from_rusty, mut from_libopus) = (Vec::new(), Vec::new());
+            for frame in 0..15 {
+                let data = rusty_encoder.encode(&tone(frame)).unwrap();
+                assert!(data.len() < 400, "about 80 bytes at 32 kbit/s, got {}", data.len());
+                from_rusty = libopus_decoder.decode(&data).unwrap();
+                let data = libopus_encoder.encode(&tone(frame)).unwrap();
+                from_libopus = rusty_decoder.decode(&data).unwrap();
+            }
+            // A 0.5 amplitude sine has an RMS of about 0.35.
+            for (name, samples) in [("libopus decoder", from_rusty), ("rusty decoder", from_libopus)] {
+                assert_eq!(samples.len(), FRAME_SIZE, "{name}, {mode:?}");
+                let level = rms(&samples);
+                assert!((0.25..0.45).contains(&level), "{name}, {mode:?}: rms {level}");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::client_net::{Place, Status, Target, VoiceClient};

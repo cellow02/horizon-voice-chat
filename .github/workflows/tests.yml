@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: The protocol copies in both mods match shared/protocol
+      - name: The copies of the shared sources in all four mods are up to date
         run: tools/sync-protocol.sh --check
-      - name: Protocol, client and server network code against each other
+      - name: Protocol, client and server network code, both AES-GCM and Opus implementations against each other
         run: cargo test --manifest-path interop-tests/Cargo.toml

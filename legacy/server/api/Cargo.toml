@@ -1,0 +1,18 @@
+[package]
+name = "mod-horizon-voice-server"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+# The launcher points this at the Horizon source it builds the game from. Every other dependency
+# must be a crate and version in Horizon's Cargo.lock.
+horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0" }
+log = "0.4"
+# Packet encryption: AES-128-GCM, built on the block cipher in protocol/gcm.rs.
+aes = "0.8"
+getrandom = "0.2"
+# The handshake's nonce.
+hmac = "0.12"
+sha2 = "0.10"
