@@ -17,6 +17,9 @@ pub use packets::*;
 
 /// The protocol revision both ends must agree on.
 pub const COMPATIBILITY_VERSION: i32 = 21;
+/// The older revision a server also accepts (Simple Voice Chat 2.6.x). It differs in the secret
+/// and state messages and in the handshake: see `encode_v20` and the server's socket code.
+pub const LEGACY_VERSION: i32 = 20;
 /// Default UDP port of a voice server.
 pub const DEFAULT_PORT: u16 = 24454;
 /// Audio format: 48 kHz mono, 20 ms Opus frames.

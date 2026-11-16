@@ -294,22 +294,38 @@ impl Shared {
         let Ok((id, sealed)) = open_at_server(datagram) else {
             return;
         };
-        // Look the secret up, then decrypt outside the lock.
-        let (player, secret) = {
+        // Look the secret up, then decrypt outside the lock. A protocol 20 client sends its
+        // player UUID where newer ones send the connection id.
+        let (player, id, secret, v20) = {
             let connections = self.connections.lock().unwrap();
-            let Some(player) = connections.player_by_id.get(&id).copied() else {
-                return;
+            let (player, v20) = match connections.player_by_id.get(&id) {
+                Some(player) => (*player, false),
+                None => (id, true),
             };
             let Some(connection) = connections.by_player.get(&player) else {
                 return;
             };
-            (player, connection.secret.clone())
+            (player, connection.id, connection.secret.clone(), v20)
         };
         let Some(plain) = secret.decrypt(sealed) else {
             return;
         };
-        let Ok(packet) = VoicePacket::decode(&plain) else {
-            return;
+        let packet = match plain.first() {
+            // Protocol 20 has no nonce: its Authenticate repeats the UUID and secret, which the
+            // decryption already proved, and it is answered with an empty acknowledgement.
+            Some(0x05) if v20 => {
+                let mut w = protocol::wire::Writer::new();
+                w.u8(protocol::MAGIC).byte_array(&secret.encrypt(&[0x06]));
+                let _ = self.socket.send_to(&w.finish(), address);
+                return;
+            }
+            Some(0x09) if v20 => VoicePacket::ConnectionCheck {
+                nonce: self.nonce(id, address),
+            },
+            _ => match VoicePacket::decode(&plain) {
+                Ok(packet) => packet,
+                Err(_) => return,
+            },
         };
         match packet {
             VoicePacket::Authenticate => {
