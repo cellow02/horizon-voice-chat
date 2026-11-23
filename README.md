@@ -156,8 +156,7 @@ Port, Reichweiten und Keep-Alive gelten nach einem Neustart des Servers.
 ## Was (noch) fehlt
 
 - Dauerhafte Gruppen aus der Server-Konfiguration, Lautstärke-Kategorien, Aufnahme,
-  Rauschunterdrückung und die Plugin-API von Simple Voice Chat. Gruppen gibt es nur für Clients mit
-  Protokoll 21; Clients mit Version 20 sehen keine.
+  Rauschunterdrückung und die Plugin-API von Simple Voice Chat.
 - Echte Spielerköpfe und Symbole an den Namensschildern (die Mod-API kennt keine Skins).
 - **Zuschauer-Sonderregeln** und vom Server erzwungenes Stummschalten.
 - **SRV-Einträge:** Der Client schickt Sprache an den Hostnamen, mit dem du beigetreten bist. Zeigt
