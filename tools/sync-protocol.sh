@@ -1,11 +1,6 @@
 #!/bin/sh
-# Copies the shared sources into every mod. A Horizon native mod may not reference files outside
-# its own folder, so each mod carries copies. Run this after editing shared/, or the client's
-# net.rs, mixer.rs and audio.rs, or the server's udp.rs, config.rs and groups.rs.
-#
-#   shared/protocol/        -> the protocol of all four mods
-#   shared/legacy/gcm.rs    -> replaces protocol/gcm.rs in the mods for the older mod API
-#   client/src, server/src  -> the game-independent files of the mods for the older mod API
+# Copies the shared protocol into both mods. A Horizon native mod may not reference files outside
+# its own folder, so each mod carries a copy. Run this after editing shared/protocol/.
 #
 # With --check it changes nothing and fails when a copy differs.
 set -eu
@@ -26,7 +21,7 @@ sync() {
     fi
 }
 
-for mod in client/src server/src legacy/client/api/src legacy/server/api/src; do
+for mod in client/src server/src; do
     if [ "$check" != "--check" ]; then
         rm -rf "$mod/protocol"
         mkdir "$mod/protocol"
@@ -34,15 +29,6 @@ for mod in client/src server/src legacy/client/api/src legacy/server/api/src; do
     for file in crypto.rs mod.rs packets.rs wire.rs; do
         sync "shared/protocol/$file" "$mod/protocol/$file"
     done
-    case "$mod" in
-        legacy/*) sync shared/legacy/gcm.rs "$mod/protocol/gcm.rs" ;;
-        *) sync shared/protocol/gcm.rs "$mod/protocol/gcm.rs" ;;
-    esac
-done
-for file in net.rs mixer.rs audio.rs; do
-    sync "client/src/$file" "legacy/client/api/src/$file"
-done
-for file in udp.rs config.rs groups.rs; do
-    sync "server/src/$file" "legacy/server/api/src/$file"
+    sync shared/protocol/gcm.rs "$mod/protocol/gcm.rs"
 done
 exit $status

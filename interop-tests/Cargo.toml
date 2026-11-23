@@ -13,8 +13,4 @@ aes-gcm = "=0.10.3"
 getrandom = "=0.2.17"
 hmac = "=0.12.1"
 sha2 = "=0.10.9"
-# The mods for the older mod API encrypt with shared/legacy/gcm.rs and encode with rusty-opus.
-# Both are checked here against what the other mods use.
-aes = "=0.8.4"
-rusty-opus = "=1.0.2"
 unsafe-libopus = "=0.2.0"

@@ -9,36 +9,15 @@ Simple Voice Chat 2.6.x / 2.7.x für Minecraft 26.3). Dadurch können auf demsel
 Horizon-Spieler mit diesem Mod und Java-Spieler mit dem originalen Simple Voice Chat miteinander
 reden.
 
-> **Stand: 0.2.0, Sprache läuft im Spiel; Menüs und Gruppen sind noch ungetestet im Spiel.** Alle vier Mods kompilieren gegen ihre Horizon-API, und die
-> Netzwerk-, Codec- und Mischer-Tests laufen durch. In einem echten Horizon-Client, auf einem echten
-> Horizon-Server und gegen einen echten Simple-Voice-Chat-Client ist der Mod noch nicht gelaufen.
-> Siehe [Testen](#testen).
+> **Stand: 0.2.0, Sprache läuft im Spiel; Menüs und Gruppen sind noch ungetestet im Spiel.** Siehe [Testen](#testen).
 
 ## Welche Horizon-Version
 
-Horizon hat sein Mod-System Mitte November 2026 umgebaut. Der Mod liegt deshalb zweimal im Repo, mit
-demselben Netzwerk- und Audio-Code darunter:
-
-| Dein Horizon | Ordner | Mod-API |
-| --- | --- | --- |
-| Nightly vom 13.11.2026 (`9f42064`), die bisherige API | [`legacy/client`](legacy/client), [`legacy/server`](legacy/server) | `horizon_client::mod_api` (Trait-Mods, `horizon-mixin.toml`) |
-| Nightly vom 22.11.2026 (`f1bb66f`) und neuer, mit Mod-SDK | [`client`](client), [`server`](server) | `horizon-mod-api` (`horizon-mod.toml`) |
-
-Der Launcher sucht sich selbst die passenden Ordner: Der bisherige kennt nur `horizon-mixin.toml`,
-der neue nur `horizon-mod.toml`. Die Befehle unter [Installieren](#installieren) sind für beide
-gleich. Beide Fassungen sprechen dasselbe Protokoll und verstehen sich untereinander.
-
-Was in der Fassung für die bisherige API anders ist:
-
-- **Der Host einer LAN-Welt kann nicht mitreden**, seine Gäste untereinander schon. Die bisherige
-  API zeigt einem Server-Mod nur die Spieler, die sich verbinden, nicht den Spieler im Fenster des
-  Hosts. Auf einem dedizierten Server gibt es die Einschränkung nicht.
-- Es gibt **kein Sprachchat-Menü und keine Gruppen**: Die bisherige API erlaubt keine eigenen
-  Bildschirme. Die Tasten stehen unter **Optionen > Mods > Horizon Voice Chat**, und die
-  Einstellungen sind Knöpfe, die bei jedem Klick zum nächsten Wert springen. Der Server-Mod kann
-  Gruppen trotzdem, für Java-Spieler mit Simple Voice Chat und Clients mit der neuen API.
-- Die Texte im Spiel sind englisch, weil die bisherige API einem Mod keine Sprachdateien erlaubt.
-- Die Server-Einstellungen werden nur beim Start des Servers gelesen.
+Die Mods brauchen Horizon ab der Nightly vom 22.11.2026 (`f1bb66f`), der ersten mit Mod-SDK
+(`horizon-mod.toml`, `horizon-mod-api`). Die Fassung für die ältere API (Nightly vom 13.11.2026,
+`horizon-mixin.toml`) liegt nicht mehr auf `main`, sondern im Branch
+[`legacy`](https://github.com/cellow02/horizon-voice-chat/tree/legacy/legacy). Sie hat kein
+Sprachchat-Menü und wird nicht weiterentwickelt.
 
 ## Die zwei Mods
 
@@ -49,8 +28,6 @@ Was in der Fassung für die bisherige API anders ist:
 
 Es sind zwei getrennte Mods, weil Horizon bei einem `side = "both"`-Mod jeden Client ohne diesen Mod
 ablehnt, auch Java-Clients. Mit einem reinen Server-Mod bleibt der Server für alle offen.
-Für die bisherige API gilt dieselbe Aufteilung mit `legacy/client/` und `legacy/server/` (gleiche
-Mod-IDs); dort braucht der Server-Mod so auch keine Audio-Bibliothek.
 
 | Du spielst … | Du brauchst |
 | --- | --- |
@@ -85,13 +62,9 @@ horizon-server --dir SERVER restart
 
 Danach den **UDP-Port 24454** in Firewall und Router freigeben, so wie den Spielport.
 
-Im bisherigen Launcher heißt der Ordner für den dedizierten Server `horizon-voice-chat/legacy/server`.
-
-Die Mods sind auf ihren Horizon-Stand gepinnt: `legacy/` auf `9f42064` vom 13.11.2026
-(`[compatibility]` in `horizon-mixin.toml`), `client/` und `server/` auf `f1bb66f` vom 22.11.2026
-(`[native]` in `horizon-mod.toml`). Der neue Launcher baut einen Mod nur gegen genau den gepinnten
-Stand; für einen anderen dort in beiden Mod-Ordnern `cargo horizon-mod update --horizon <Build>`
-ausführen. Der bisherige Launcher fragt bei einem anderen Stand nach ("Build anyway").
+Die Mods sind auf `f1bb66f` vom 22.11.2026 gepinnt (`[native]` in `horizon-mod.toml`), ihre
+`Cargo.lock` auf die Crate-Versionen genau dieses Spiels. Der Launcher baut einen Mod nur gegen den
+gepinnten Stand; für einen anderen siehe [Entwickeln](#entwickeln).
 
 Linux: Der Client braucht ALSA (`libasound2`), zum Bauen auch `libasound2-dev` und `pkg-config`.
 Der Server-Mod hat keine Audio-Abhängigkeit.
@@ -172,9 +145,9 @@ Was automatisch geprüft ist:
 
 ```sh
 cargo test --manifest-path interop-tests/Cargo.toml   # Protokoll, Client- und Server-Netzcode über Loopback,
-                                                        # beide AES-GCM- und beide Opus-Umsetzungen gegeneinander
-cd client && cargo test                                 # zusätzlich Mischer und Mikrofon-Logik
-tools/check-legacy.sh pfad/zum/horizon-checkout         # baut und testet legacy/ im Horizon-Quelltext (9f42064)
+                                                        # und die Gruppen
+cd client && cargo test                                 # zusätzlich Mischer, Mikrofon-Logik und Einstellungen
+cd server && cargo test                                 # Konfiguration und Gruppen
 ```
 
 Was im Spiel noch geprüft werden muss:
@@ -191,34 +164,36 @@ Im Log stehen die Zeilen des Mods unter `Voice chat …`.
 ## Entwickeln
 
 ```
-shared/protocol/   Das Protokoll (Quelle). tools/sync-protocol.sh kopiert es in alle vier Mods,
+shared/protocol/   Das Protokoll (Quelle). tools/sync-protocol.sh kopiert es in beide Mods,
                    weil ein Native-Mod keine Dateien außerhalb seines Ordners verwenden darf.
-shared/legacy/     gcm.rs: AES-GCM auf dem Blockchiffre `aes`, für die bisherige API
 client/src/        net.rs (UDP-Verbindung), audio.rs (Geräte), codec.rs (Opus), mixer.rs, lib.rs (Hooks)
 client/src/        ui.rs (Menüs), icons.rs (eigene Symbole), settings.rs (Einstellungsdatei)
 server/src/        udp.rs (Sprachserver), groups.rs (Gruppen), config.rs, lib.rs (Hooks)
-legacy/client/     Dasselbe für die bisherige API: eigene lib.rs und codec.rs, der Rest sind Kopien
-legacy/server/     Dasselbe für die bisherige API: eigene lib.rs, der Rest sind Kopien
 interop-tests/     Client- und Server-Netzcode gegeneinander, ohne Spiel
 PROTOCOL.md        Beschreibung des Protokolls
 ```
 
-Nach Änderungen an `shared/`, an `net.rs`, `mixer.rs`, `audio.rs`, `udp.rs`, `groups.rs` oder `config.rs`
-`tools/sync-protocol.sh` ausführen: Es verteilt die Dateien auf die Mods (`--check` prüft nur).
+Nach Änderungen an `shared/protocol/` `tools/sync-protocol.sh` ausführen: Es kopiert das Protokoll
+in beide Mods (`--check` prüft nur).
 
-**Bisherige API (`legacy/`):** Ein Trait-Mod darf nur Crates verwenden, die in Horizons eigener
-`Cargo.lock` stehen. Dort gibt es `aes`, aber nicht `aes-gcm`, und für Opus `rusty-opus` statt
-libopus. Deshalb haben diese Mods eine eigene GCM-Umsetzung (`shared/legacy/gcm.rs`) und eine
-eigene `codec.rs`; die Interop-Tests prüfen beide gegen die Fassungen der anderen Mods.
-`tools/check-legacy.sh` baut die Mods so, wie es der Launcher tut: als Pakete in Horizons Workspace.
-
-**Neue API (`client/`, `server/`):** Zum lokalen Kompilieren ohne Launcher erwartet jeder Mod das SDK unter `.horizon/sdk/api`
+Zum lokalen Kompilieren ohne Launcher erwartet jeder Mod das SDK unter `.horizon/sdk/api`
 (`cargo horizon-mod` legt es an; ein Symlink auf einen Checkout von `horizon-rust/horizon` geht
 auch). Ein lokales `cargo check` oder `cargo test` im Mod-Ordner schreibt `Cargo.lock` um. Die
 eingecheckte `Cargo.lock` ist die Abhängigkeits-Sperre, die der Launcher verlangt: vor dem
-Committen mit `git checkout -- Cargo.lock` zurücksetzen, oder nach geänderten Abhängigkeiten mit
-`horizon-launcher native-lock <ordner> --update-lock` (ersatzweise `tools/make-lock.sh`) neu
-erzeugen.
+Committen mit `git checkout -- Cargo.lock` zurücksetzen.
+
+Der Launcher baut auf dem Client nur die Mods und nimmt das Spiel fertig aus dem SDK. Jede Crate,
+die ein Mod mit dem Spiel teilt, muss deshalb in dessen `Cargo.lock` genau die Version und die
+Abhängigkeiten aus der `Cargo.lock` des Spiels haben. `horizon-launcher native-lock --update-lock`
+löst neuere Versionen auf und taugt dafür nicht. Nach geänderten Abhängigkeiten oder einem neuen
+Horizon-Stand die Sperre so neu erzeugen (Horizon-Checkout auf dem gepinnten Commit):
+
+```sh
+tools/make-lock.sh client pfad/zu/horizon/Cargo.lock
+tools/make-lock.sh server pfad/zu/horizon/Cargo.lock
+```
+
+Das Skript prüft das Ergebnis wie der Launcher und bricht ab, wenn eine Crate des Spiels abweicht.
 
 ## Herkunft und Lizenz
 
@@ -231,9 +206,6 @@ Mojang oder Microsoft verbunden und wird von ihnen nicht unterstützt.
 
 Verwendete Bibliotheken: [cpal](https://github.com/RustAudio/cpal) (Apache-2.0),
 [unsafe-libopus](https://github.com/DCNick3/unsafe-libopus) (BSD-3-Clause, libopus in Rust),
-[rusty-opus](https://github.com/Remade-With-Rust/rusty-opus) (BSD-3-Clause, in `legacy/`),
-[aes](https://github.com/RustCrypto/block-ciphers) (MIT/Apache-2.0),
 [aes-gcm](https://github.com/RustCrypto/AEADs), [hmac](https://github.com/RustCrypto/MACs),
 [sha2](https://github.com/RustCrypto/hashes) (MIT/Apache-2.0), [getrandom](https://github.com/rust-random/getrandom)
-(MIT/Apache-2.0). Die Mods bauen gegen die Horizon-Mod-API (LGPL-3.0-or-later; der Stand vom
-13.11.2026 steht noch unter MIT).
+(MIT/Apache-2.0). Die Mods bauen gegen die Horizon-Mod-API (LGPL-3.0-or-later).
