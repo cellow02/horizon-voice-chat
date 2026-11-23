@@ -66,7 +66,6 @@ pub struct Devices {
 }
 
 /// The names of the system's microphones (`input`) or speakers.
-#[allow(dead_code)] // The mod for the older API has no device lists.
 pub fn device_names(input: bool) -> Vec<String> {
     let host = cpal::default_host();
     let devices = if input {
@@ -113,18 +112,11 @@ pub struct Audio {
     pub mixer: Arc<Mutex<Mixer>>,
     pub captured: Receiver<Captured>,
     /// Encoded frames of the microphone test.
-    #[allow(dead_code)] // The mod for the older API has no microphone test.
     pub tested: Receiver<Vec<u8>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Audio {
-    /// Opens the default microphone and speakers on a thread of their own.
-    #[allow(dead_code)] // The mod for the older API opens the default devices.
-    pub fn start(codec: Codec) -> Self {
-        Self::start_with(codec, &Devices::default())
-    }
-
     /// Opens the chosen microphone and speakers on a thread of their own. A missing device is
     /// logged and left out: without a microphone the player still hears the others.
     pub fn start_with(codec: Codec, devices: &Devices) -> Self {

@@ -1,7 +1,4 @@
 //! AES-128-GCM through the `aes-gcm` crate.
-//!
-//! The mods for Horizon's older mod API may only use crates in Horizon's own lock file, which
-//! has `aes` but not `aes-gcm`: they get `shared/legacy/gcm.rs` in place of this file.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes128Gcm, Nonce};
