@@ -66,8 +66,10 @@ Die Mods sind auf `f1bb66f` vom 22.11.2026 gepinnt (`[native]` in `horizon-mod.t
 `Cargo.lock` auf die Crate-Versionen genau dieses Spiels. Der Launcher baut einen Mod nur gegen den
 gepinnten Stand; für einen anderen siehe [Entwickeln](#entwickeln).
 
-Linux: Der Client braucht ALSA (`libasound2`), zum Bauen auch `libasound2-dev` und `pkg-config`.
-Der Server-Mod hat keine Audio-Abhängigkeit.
+Linux: Der Client spielt und nimmt über ALSA auf. Er lädt dafür zur Laufzeit dieselbe
+`libasound.so.2`, die das Spiel schon benutzt, und kompiliert selbst keine ALSA-Anbindung: Der Launcher
+lehnt einen Mod ab, der eine zweite Kopie einer nativen Bibliothek des Spiels mitbringen würde. Auf
+Windows und macOS nimmt der Client cpal. Der Server-Mod hat keine Audio-Abhängigkeit.
 
 ## Bedienen
 
@@ -166,7 +168,8 @@ Im Log stehen die Zeilen des Mods unter `Voice chat …`.
 ```
 shared/protocol/   Das Protokoll (Quelle). tools/sync-protocol.sh kopiert es in beide Mods,
                    weil ein Native-Mod keine Dateien außerhalb seines Ordners verwenden darf.
-client/src/        net.rs (UDP-Verbindung), audio.rs (Geräte), codec.rs (Opus), mixer.rs, lib.rs (Hooks)
+client/src/        net.rs (UDP-Verbindung), audio.rs (Mikrofon-Logik), sound_alsa.rs (Geräte unter Linux),
+                   sound_cpal.rs (Geräte unter Windows/macOS), codec.rs (Opus), mixer.rs, lib.rs (Hooks)
 client/src/        ui.rs (Menüs), icons.rs (eigene Symbole), settings.rs (Einstellungsdatei)
 server/src/        udp.rs (Sprachserver), groups.rs (Gruppen), config.rs, lib.rs (Hooks)
 interop-tests/     Client- und Server-Netzcode gegeneinander, ohne Spiel

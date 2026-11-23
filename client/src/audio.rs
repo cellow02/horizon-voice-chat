@@ -3,13 +3,19 @@
 //! One thread owns both audio streams (they cannot move between threads on every platform).
 //! The microphone callback cuts the input into 20 ms frames, decides whether the player is
 //! talking, and hands encoded frames to the game's main thread. The output callback pulls the
-//! mix of everyone talking from the [`Mixer`].
+//! mix of everyone talking from the [`Mixer`]. The devices are opened through cpal, except on
+//! Linux, where the game's own ALSA library is used (see `sound_alsa.rs`).
+
+#[cfg(target_os = "linux")]
+#[path = "sound_alsa.rs"]
+mod backend;
+#[cfg(not(target_os = "linux"))]
+#[path = "sound_cpal.rs"]
+mod backend;
 
 use crate::codec::Encoder;
 use crate::mixer::Mixer;
 use crate::protocol::{Codec, FRAME_SIZE, SAMPLE_RATE};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, Sample, SampleFormat, SizedSample, Stream};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -66,37 +72,12 @@ pub struct Devices {
 }
 
 /// The names of the system's microphones (`input`) or speakers.
-pub fn device_names(input: bool) -> Vec<String> {
-    let host = cpal::default_host();
-    let devices = if input {
-        host.input_devices()
-    } else {
-        host.output_devices()
-    };
-    let mut names: Vec<String> = devices
-        .map(|devices| devices.filter_map(|device| device.name().ok()).collect())
-        .unwrap_or_default();
-    names.dedup();
-    names
-}
+pub use backend::device_names;
 
-fn find_device(host: &cpal::Host, input: bool, name: Option<&str>) -> Option<cpal::Device> {
-    let wanted = name.and_then(|name| {
-        let mut devices = if input {
-            host.input_devices().ok()?
-        } else {
-            host.output_devices().ok()?
-        };
-        devices.find(|device| device.name().is_ok_and(|n| n == name))
-    });
-    wanted.or_else(|| {
-        if input {
-            host.default_input_device()
-        } else {
-            host.default_output_device()
-        }
-    })
-}
+/// What the output stream asks for: `channels` (1 or 2) interleaved samples at `rate` Hz.
+pub type Render = Box<dyn FnMut(&mut [f32], usize, u32) + Send>;
+/// Given the microphone's rate, what takes its mono samples.
+pub type MakeSink = Box<dyn FnOnce(u32) -> Result<Box<dyn FnMut(f32) + Send>, String> + Send>;
 
 /// What the microphone hands to the main thread.
 pub enum Captured {
@@ -130,17 +111,21 @@ impl Audio {
             std::thread::Builder::new()
                 .name("horizon-voice-audio".into())
                 .spawn(move || {
-                    let host = cpal::default_host();
-                    let output = open_output(&host, devices.speaker.as_deref(), mixer)
+                    let render: Render = Box::new(move |out, channels, rate| match mixer.lock() {
+                        Ok(mut mixer) => mixer.render(out, channels, rate),
+                        Err(_) => out.fill(0.0),
+                    });
+                    let output = backend::open_output(devices.speaker.as_deref(), render)
                         .map_err(|error| log::warn!("Voice chat has no speakers: {error}"))
                         .ok();
-                    let input = open_input(
-                        &host,
-                        devices.microphone.as_deref(),
-                        codec,
-                        controls.clone(),
-                        (sender, test_sender),
-                    )
+                    let capture_controls = controls.clone();
+                    let make: MakeSink = Box::new(move |rate| {
+                        let mut capture =
+                            Capture::new(codec, rate, capture_controls, (sender, test_sender))
+                                .ok_or("the Opus encoder could not be created")?;
+                        Ok(Box::new(move |sample| capture.push(sample)))
+                    });
+                    let input = backend::open_input(devices.microphone.as_deref(), make)
                         .map_err(|error| log::warn!("Voice chat has no microphone: {error}"))
                         .ok();
                     controls.has_microphone.store(input.is_some(), Ordering::SeqCst);
@@ -171,107 +156,6 @@ impl Drop for Audio {
             let _ = thread.join();
         }
     }
-}
-
-fn open_output(
-    host: &cpal::Host,
-    name: Option<&str>,
-    mixer: Arc<Mutex<Mixer>>,
-) -> Result<Stream, String> {
-    let device = find_device(host, false, name).ok_or("no output device")?;
-    let supported = device.default_output_config().map_err(|e| e.to_string())?;
-    let format = supported.sample_format();
-    let config = supported.config();
-    let stream = match format {
-        SampleFormat::F32 => output_stream::<f32>(&device, &config, mixer),
-        SampleFormat::I16 => output_stream::<i16>(&device, &config, mixer),
-        SampleFormat::U16 => output_stream::<u16>(&device, &config, mixer),
-        SampleFormat::I32 => output_stream::<i32>(&device, &config, mixer),
-        other => return Err(format!("unsupported output sample format {other:?}")),
-    }?;
-    stream.play().map_err(|e| e.to_string())?;
-    Ok(stream)
-}
-
-fn output_stream<T: SizedSample + FromSample<f32>>(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    mixer: Arc<Mutex<Mixer>>,
-) -> Result<Stream, String> {
-    let channels = usize::from(config.channels);
-    let rate = config.sample_rate.0;
-    let mut mix = Vec::new();
-    device
-        .build_output_stream(
-            config,
-            move |out: &mut [T], _: &cpal::OutputCallbackInfo| {
-                let frames = out.len() / channels.max(1);
-                // The mixer writes mono or stereo; further channels stay silent.
-                let mixed = channels.min(2);
-                mix.resize(frames * mixed, 0.0);
-                match mixer.lock() {
-                    Ok(mut mixer) => mixer.render(&mut mix, mixed, rate),
-                    Err(_) => mix.fill(0.0),
-                }
-                for (frame, mixed_frame) in out.chunks_mut(channels.max(1)).zip(mix.chunks(mixed.max(1))) {
-                    for (index, sample) in frame.iter_mut().enumerate() {
-                        *sample = T::from_sample(mixed_frame.get(index).copied().unwrap_or(0.0));
-                    }
-                }
-            },
-            |error| log::warn!("Voice chat output: {error}"),
-            None,
-        )
-        .map_err(|e| e.to_string())
-}
-
-fn open_input(
-    host: &cpal::Host,
-    name: Option<&str>,
-    codec: Codec,
-    controls: Arc<Controls>,
-    sender: (Sender<Captured>, Sender<Vec<u8>>),
-) -> Result<Stream, String> {
-    let device = find_device(host, true, name).ok_or("no input device")?;
-    let supported = device.default_input_config().map_err(|e| e.to_string())?;
-    let format = supported.sample_format();
-    let config = supported.config();
-    let capture = Capture::new(codec, config.sample_rate.0, controls, sender)
-        .ok_or("the Opus encoder could not be created")?;
-    let stream = match format {
-        SampleFormat::F32 => input_stream::<f32>(&device, &config, capture),
-        SampleFormat::I16 => input_stream::<i16>(&device, &config, capture),
-        SampleFormat::U16 => input_stream::<u16>(&device, &config, capture),
-        SampleFormat::I32 => input_stream::<i32>(&device, &config, capture),
-        other => return Err(format!("unsupported input sample format {other:?}")),
-    }?;
-    stream.play().map_err(|e| e.to_string())?;
-    Ok(stream)
-}
-
-fn input_stream<T: SizedSample>(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    mut capture: Capture,
-) -> Result<Stream, String>
-where
-    f32: FromSample<T>,
-{
-    let channels = usize::from(config.channels).max(1);
-    device
-        .build_input_stream(
-            config,
-            move |input: &[T], _: &cpal::InputCallbackInfo| {
-                for frame in input.chunks(channels) {
-                    // Mix the device's channels down to mono.
-                    let sum: f32 = frame.iter().map(|sample| f32::from_sample(*sample)).sum();
-                    capture.push(sum / frame.len() as f32);
-                }
-            },
-            |error| log::warn!("Voice chat input: {error}"),
-            None,
-        )
-        .map_err(|e| e.to_string())
 }
 
 /// Turns the microphone's samples into encoded frames.
