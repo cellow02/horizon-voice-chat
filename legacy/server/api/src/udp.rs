@@ -5,7 +5,7 @@
 //! methods; the socket thread never touches the game.
 
 use crate::protocol::{
-    self, NONCE_SIZE, Secret, VoicePacket, crypto, frame_to_client, open_at_server,
+    self, GroupType, NONCE_SIZE, Secret, VoicePacket, crypto, frame_to_client, open_at_server,
 };
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -103,6 +103,8 @@ struct Shared {
     running: AtomicBool,
     connections: Mutex<Connections>,
     positions: RwLock<HashMap<u128, Position>>,
+    /// Each player in a group: the group's id and type.
+    groups: RwLock<HashMap<u128, (u128, GroupType)>>,
     events: Mutex<Vec<Event>>,
 }
 
@@ -141,6 +143,7 @@ impl VoiceServer {
             running: AtomicBool::new(true),
             connections: Mutex::default(),
             positions: RwLock::default(),
+            groups: RwLock::default(),
             events: Mutex::default(),
         });
         let worker = shared.clone();
@@ -220,6 +223,11 @@ impl VoiceServer {
     /// Replaces the positions of all players; called once a server tick.
     pub fn set_positions(&self, positions: HashMap<u128, Position>) {
         *self.shared.positions.write().unwrap() = positions;
+    }
+
+    /// Which group each player is in (players in none are left out).
+    pub fn set_groups(&self, groups: HashMap<u128, (u128, GroupType)>) {
+        *self.shared.groups.write().unwrap() = groups;
     }
 
     /// What happened on the socket thread since the last call.
@@ -400,6 +408,30 @@ impl Shared {
 
     /// Sends one frame of `sender`'s speech to every connected player in range.
     fn relay(&self, sender: u128, data: Vec<u8>, sequence: i64, whispering: bool) {
+        let groups = self.groups.read().unwrap().clone();
+        let own_group = groups.get(&sender).copied();
+        // Group members hear each other wherever they are.
+        if let Some((group, _)) = own_group {
+            let members: Vec<u128> = groups
+                .iter()
+                .filter(|(player, (other, _))| **player != sender && *other == group)
+                .map(|(player, _)| *player)
+                .collect();
+            let packet = VoicePacket::GroupSound {
+                channel: sender,
+                sender,
+                data: data.clone(),
+                sequence,
+                category: None,
+            };
+            for (address, secret) in self.targets(&members) {
+                self.send(address, &secret, &packet);
+            }
+        }
+        // Players nearby hear a speaker in no group or in an open one.
+        if own_group.is_some_and(|(_, kind)| kind != GroupType::Open) {
+            return;
+        }
         let distance = if whispering {
             self.settings.whisper_distance
         } else {
@@ -423,20 +455,18 @@ impl Shared {
                             <= range * range
                 })
                 .map(|(player, _)| *player)
+                .filter(|player| match groups.get(player) {
+                    // Already heard through the group.
+                    Some((group, _)) if own_group.is_some_and(|(own, _)| own == *group) => false,
+                    // An isolated group hears only itself.
+                    Some((_, GroupType::Isolated)) => false,
+                    _ => true,
+                })
                 .collect()
         };
         if in_range.is_empty() {
             return;
         }
-        let targets: Vec<(SocketAddr, Secret)> = {
-            let connections = self.connections.lock().unwrap();
-            in_range
-                .iter()
-                .filter_map(|player| connections.by_player.get(player))
-                .filter(|connection| !connection.disabled)
-                .filter_map(|connection| Some((connection.address?, connection.secret.clone())))
-                .collect()
-        };
         let packet = VoicePacket::PlayerSound {
             channel: sender,
             sender,
@@ -446,9 +476,23 @@ impl Shared {
             whispering,
             category: None,
         };
-        for (address, secret) in targets {
+        for (address, secret) in self.targets(&in_range) {
             self.send(address, &secret, &packet);
         }
+    }
+
+    /// The addresses and keys of `players` with an established connection and voice chat on.
+    fn targets(&self, players: &[u128]) -> Vec<(SocketAddr, Secret)> {
+        if players.is_empty() {
+            return Vec::new();
+        }
+        let connections = self.connections.lock().unwrap();
+        players
+            .iter()
+            .filter_map(|player| connections.by_player.get(player))
+            .filter(|connection| !connection.disabled)
+            .filter_map(|connection| Some((connection.address?, connection.secret.clone())))
+            .collect()
     }
 
     fn keep_alives(&self, timeout: Duration) {

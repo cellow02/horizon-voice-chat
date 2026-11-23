@@ -350,10 +350,15 @@ impl Client {
         }
 
         let mut names = HashMap::new();
+        let own = self.secret.as_ref().map(|secret| secret.player);
         let talking = {
             let mut mixer = audio.mixer.lock().unwrap();
             if let Some(connection) = &self.connection {
                 for sound in connection.sounds() {
+                    // Our own voice never plays back, whatever a server relays.
+                    if Some(sound.sender) == own {
+                        continue;
+                    }
                     mixer.feed(&sound);
                 }
             }

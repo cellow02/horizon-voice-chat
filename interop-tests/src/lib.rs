@@ -213,6 +213,49 @@ mod tests {
     }
 
     #[test]
+    fn groups_hear_each_other_anywhere_and_isolated_groups_only_themselves() {
+        use super::protocol::GroupType;
+        let server = server(1000);
+        let alex = join(&server, ALEX);
+        let steve = join(&server, STEVE);
+        wait("both handshakes", || {
+            alex.status() == Status::Connected && steve.status() == Status::Connected
+        });
+        // Same group, different dimensions: Steve hears Alex without a position.
+        place(&server, &[(ALEX, 0, [0.0, 64.0, 0.0]), (STEVE, 1, [5000.0, 64.0, 0.0])]);
+        server.set_groups(HashMap::from([
+            (ALEX, (7, GroupType::Normal)),
+            (STEVE, (7, GroupType::Normal)),
+        ]));
+        alex.send_mic(&[1], 0, false);
+        let mut heard = Vec::new();
+        wait("Steve to hear the group", || {
+            heard.extend(steve.sounds());
+            !heard.is_empty()
+        });
+        assert_eq!(heard[0].place, Place::Everywhere);
+        assert_eq!(heard[0].sender, ALEX);
+
+        // Alex alone in an isolated group, Steve next to her: he hears nothing, she hears
+        // nothing of him. The frame sent after the groups are gone arrives first.
+        place(&server, &[(ALEX, 0, [0.0, 64.0, 0.0]), (STEVE, 0, [1.0, 64.0, 0.0])]);
+        server.set_groups(HashMap::from([(ALEX, (8, GroupType::Isolated))]));
+        alex.send_mic(&[2], 1, false);
+        steve.send_mic(&[3], 0, false);
+        std::thread::sleep(Duration::from_millis(100));
+        server.set_groups(HashMap::new());
+        alex.send_mic(&[4], 2, false);
+        heard.clear();
+        wait("the frame sent without groups", || {
+            heard.extend(steve.sounds());
+            !heard.is_empty()
+        });
+        assert_eq!(heard[0].data, [4]);
+        assert_eq!(heard[0].place, Place::Player { distance: 48.0 });
+        assert_eq!(alex.sounds().count(), 0);
+    }
+
+    #[test]
     fn a_wrong_secret_never_connects() {
         let server = server(1000);
         let (connection, _) = server.create_connection(ALEX).unwrap();

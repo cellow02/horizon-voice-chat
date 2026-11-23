@@ -34,7 +34,69 @@ pub struct Controls {
     pub talking: AtomicBool,
     /// Whether a microphone was opened.
     pub has_microphone: AtomicBool,
+    /// Microphone test: frames go to `tested` (to be played back here), none to `captured`.
+    pub monitor: AtomicBool,
+    /// Loudness of the last microphone frame in dB (f32 bits), for the level meter.
+    pub level_db: AtomicU32,
     running: AtomicBool,
+}
+
+impl Controls {
+    fn new() -> Self {
+        Self {
+            push_to_talk: AtomicBool::new(false),
+            voice_activation: AtomicBool::new(false),
+            muted: AtomicBool::new(false),
+            threshold_db: AtomicU32::new((-40f32).to_bits()),
+            microphone_volume: AtomicU32::new(1f32.to_bits()),
+            talking: AtomicBool::new(false),
+            has_microphone: AtomicBool::new(false),
+            monitor: AtomicBool::new(false),
+            level_db: AtomicU32::new((-100f32).to_bits()),
+            running: AtomicBool::new(true),
+        }
+    }
+}
+
+/// Which devices to open; None (or a name no device has) is the system default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Devices {
+    pub microphone: Option<String>,
+    pub speaker: Option<String>,
+}
+
+/// The names of the system's microphones (`input`) or speakers.
+#[allow(dead_code)] // The mod for the older API has no device lists.
+pub fn device_names(input: bool) -> Vec<String> {
+    let host = cpal::default_host();
+    let devices = if input {
+        host.input_devices()
+    } else {
+        host.output_devices()
+    };
+    let mut names: Vec<String> = devices
+        .map(|devices| devices.filter_map(|device| device.name().ok()).collect())
+        .unwrap_or_default();
+    names.dedup();
+    names
+}
+
+fn find_device(host: &cpal::Host, input: bool, name: Option<&str>) -> Option<cpal::Device> {
+    let wanted = name.and_then(|name| {
+        let mut devices = if input {
+            host.input_devices().ok()?
+        } else {
+            host.output_devices().ok()?
+        };
+        devices.find(|device| device.name().is_ok_and(|n| n == name))
+    });
+    wanted.or_else(|| {
+        if input {
+            host.default_input_device()
+        } else {
+            host.default_output_device()
+        }
+    })
 }
 
 /// What the microphone hands to the main thread.
@@ -50,35 +112,43 @@ pub struct Audio {
     pub controls: Arc<Controls>,
     pub mixer: Arc<Mutex<Mixer>>,
     pub captured: Receiver<Captured>,
+    /// Encoded frames of the microphone test.
+    #[allow(dead_code)] // The mod for the older API has no microphone test.
+    pub tested: Receiver<Vec<u8>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Audio {
-    /// Opens the default microphone and speakers on a thread of their own. A missing device is
-    /// logged and left out: without a microphone the player still hears the others.
+    /// Opens the default microphone and speakers on a thread of their own.
+    #[allow(dead_code)] // The mod for the older API opens the default devices.
     pub fn start(codec: Codec) -> Self {
-        let controls = Arc::new(Controls {
-            push_to_talk: AtomicBool::new(false),
-            voice_activation: AtomicBool::new(false),
-            muted: AtomicBool::new(false),
-            threshold_db: AtomicU32::new((-40f32).to_bits()),
-            microphone_volume: AtomicU32::new(1f32.to_bits()),
-            talking: AtomicBool::new(false),
-            has_microphone: AtomicBool::new(false),
-            running: AtomicBool::new(true),
-        });
+        Self::start_with(codec, &Devices::default())
+    }
+
+    /// Opens the chosen microphone and speakers on a thread of their own. A missing device is
+    /// logged and left out: without a microphone the player still hears the others.
+    pub fn start_with(codec: Codec, devices: &Devices) -> Self {
+        let controls = Arc::new(Controls::new());
         let mixer = Arc::new(Mutex::new(Mixer::new()));
         let (sender, captured) = channel();
+        let (test_sender, tested) = channel();
+        let devices = devices.clone();
         let thread = {
             let (controls, mixer) = (controls.clone(), mixer.clone());
             std::thread::Builder::new()
                 .name("horizon-voice-audio".into())
                 .spawn(move || {
                     let host = cpal::default_host();
-                    let output = open_output(&host, mixer)
+                    let output = open_output(&host, devices.speaker.as_deref(), mixer)
                         .map_err(|error| log::warn!("Voice chat has no speakers: {error}"))
                         .ok();
-                    let input = open_input(&host, codec, controls.clone(), sender)
+                    let input = open_input(
+                        &host,
+                        devices.microphone.as_deref(),
+                        codec,
+                        controls.clone(),
+                        (sender, test_sender),
+                    )
                         .map_err(|error| log::warn!("Voice chat has no microphone: {error}"))
                         .ok();
                     controls.has_microphone.store(input.is_some(), Ordering::SeqCst);
@@ -95,6 +165,7 @@ impl Audio {
             controls,
             mixer,
             captured,
+            tested,
             thread,
         }
     }
@@ -110,10 +181,12 @@ impl Drop for Audio {
     }
 }
 
-fn open_output(host: &cpal::Host, mixer: Arc<Mutex<Mixer>>) -> Result<Stream, String> {
-    let device = host
-        .default_output_device()
-        .ok_or("no default output device")?;
+fn open_output(
+    host: &cpal::Host,
+    name: Option<&str>,
+    mixer: Arc<Mutex<Mixer>>,
+) -> Result<Stream, String> {
+    let device = find_device(host, false, name).ok_or("no output device")?;
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     let format = supported.sample_format();
     let config = supported.config();
@@ -162,13 +235,12 @@ fn output_stream<T: SizedSample + FromSample<f32>>(
 
 fn open_input(
     host: &cpal::Host,
+    name: Option<&str>,
     codec: Codec,
     controls: Arc<Controls>,
-    sender: Sender<Captured>,
+    sender: (Sender<Captured>, Sender<Vec<u8>>),
 ) -> Result<Stream, String> {
-    let device = host
-        .default_input_device()
-        .ok_or("no default input device")?;
+    let device = find_device(host, true, name).ok_or("no input device")?;
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let format = supported.sample_format();
     let config = supported.config();
@@ -215,6 +287,7 @@ pub struct Capture {
     encoder: Encoder,
     controls: Arc<Controls>,
     sender: Sender<Captured>,
+    test_sender: Sender<Vec<u8>>,
     /// Device samples per 48 kHz sample.
     step: f64,
     phase: f64,
@@ -231,12 +304,13 @@ impl Capture {
         codec: Codec,
         device_rate: u32,
         controls: Arc<Controls>,
-        sender: Sender<Captured>,
+        (sender, test_sender): (Sender<Captured>, Sender<Vec<u8>>),
     ) -> Option<Self> {
         Some(Self {
             encoder: Encoder::new(codec)?,
             controls,
             sender,
+            test_sender,
             step: f64::from(device_rate.max(1)) / f64::from(SAMPLE_RATE),
             phase: 0.0,
             previous: 0.0,
@@ -272,19 +346,39 @@ impl Capture {
             energy += *sample * *sample;
         }
         let level_db = 10.0 * (energy / FRAME_SIZE as f32).max(1e-10).log10();
+        self.controls
+            .level_db
+            .store(level_db.to_bits(), Ordering::Relaxed);
+        let threshold = f32::from_bits(self.controls.threshold_db.load(Ordering::Relaxed));
+        let voiced = if level_db >= threshold {
+            self.hang = HANG_FRAMES;
+            true
+        } else if self.hang > 0 {
+            self.hang -= 1;
+            true
+        } else {
+            false
+        };
+        let voice_activation = self.controls.voice_activation.load(Ordering::Relaxed);
+        if self.controls.monitor.load(Ordering::Relaxed) {
+            // The microphone test plays back what voice activation lets through, or everything.
+            if self.sending {
+                let _ = self.sender.send(Captured::End);
+                self.sending = false;
+            }
+            let pass = !voice_activation || voiced;
+            if pass {
+                if let Some(data) = self.encoder.encode(&self.frame) {
+                    let _ = self.test_sender.send(data);
+                }
+            }
+            self.controls.talking.store(pass, Ordering::Relaxed);
+            return;
+        }
         let wanted = if self.controls.muted.load(Ordering::Relaxed) {
             false
-        } else if self.controls.voice_activation.load(Ordering::Relaxed) {
-            let threshold = f32::from_bits(self.controls.threshold_db.load(Ordering::Relaxed));
-            if level_db >= threshold {
-                self.hang = HANG_FRAMES;
-                true
-            } else if self.hang > 0 {
-                self.hang -= 1;
-                true
-            } else {
-                false
-            }
+        } else if voice_activation {
+            voiced
         } else {
             self.controls.push_to_talk.load(Ordering::Relaxed)
         };
@@ -307,16 +401,9 @@ impl Capture {
 #[cfg(test)]
 impl Controls {
     pub fn for_tests() -> Arc<Self> {
-        Arc::new(Self {
-            push_to_talk: AtomicBool::new(false),
-            voice_activation: AtomicBool::new(false),
-            muted: AtomicBool::new(false),
-            threshold_db: AtomicU32::new((-40f32).to_bits()),
-            microphone_volume: AtomicU32::new(1f32.to_bits()),
-            talking: AtomicBool::new(false),
-            has_microphone: AtomicBool::new(true),
-            running: AtomicBool::new(true),
-        })
+        let controls = Self::new();
+        controls.has_microphone.store(true, Ordering::SeqCst);
+        Arc::new(controls)
     }
 }
 
@@ -346,7 +433,8 @@ mod tests {
     fn push_to_talk_sends_only_while_held_and_ends_the_burst_once() {
         let controls = Controls::for_tests();
         let (sender, captured) = channel();
-        let mut capture = Capture::new(Codec::Voip, 48_000, controls.clone(), sender).unwrap();
+        let mut capture =
+            Capture::new(Codec::Voip, 48_000, controls.clone(), (sender, channel().0)).unwrap();
         speak(&mut capture, 48_000, 100, 0.5);
         assert_eq!(drain(&captured), (0, 0));
         controls.push_to_talk.store(true, Ordering::SeqCst);
@@ -368,7 +456,7 @@ mod tests {
         let controls = Controls::for_tests();
         controls.voice_activation.store(true, Ordering::SeqCst);
         let (sender, captured) = channel();
-        let mut capture = Capture::new(Codec::Voip, 48_000, controls, sender).unwrap();
+        let mut capture = Capture::new(Codec::Voip, 48_000, controls, (sender, channel().0)).unwrap();
         // Room noise at -60 dB stays below the -40 dB threshold.
         speak(&mut capture, 48_000, 200, 0.001);
         assert_eq!(drain(&captured), (0, 0));
@@ -385,7 +473,7 @@ mod tests {
             let controls = Controls::for_tests();
             controls.push_to_talk.store(true, Ordering::SeqCst);
             let (sender, captured) = channel();
-            let mut capture = Capture::new(Codec::Voip, rate, controls, sender).unwrap();
+            let mut capture = Capture::new(Codec::Voip, rate, controls, (sender, channel().0)).unwrap();
             speak(&mut capture, rate, 1000, 0.5);
             let (frames, _) = drain(&captured);
             assert!((49..=50).contains(&frames), "{rate} Hz gave {frames} frames a second");

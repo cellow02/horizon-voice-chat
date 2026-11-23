@@ -6,6 +6,7 @@
 //! running the Simple Voice Chat mod and Horizon clients running Horizon Voice Chat both work.
 
 mod config;
+mod groups;
 #[allow(dead_code)]
 mod protocol;
 #[allow(dead_code)]
@@ -18,6 +19,7 @@ use mod_api::{
     RegistrationContext, ServerHost, ServerStartedEvent, ServerStoppingEvent, ServerTickEvent,
     ServerTickPhase, Text,
 };
+use groups::{Effect, Groups};
 use protocol::{COMPATIBILITY_VERSION, LEGACY_VERSION, Codec, PlayerState, SecretMessage, channel};
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -36,8 +38,10 @@ struct State {
     /// Players whose client asked for a secret with the right protocol version. Only they
     /// are sent voice chat plugin messages.
     compatible: HashSet<u128>,
-    /// Those of them who speak protocol 20 and get the older message formats.
+    /// Those of them who speak protocol 20 and get the older message formats. They get no
+    /// groups.
     v20: HashSet<u128>,
+    groups: Groups,
 }
 
 #[derive(Default)]
@@ -96,7 +100,7 @@ impl State {
             mtu_size: self.config.mtu_size,
             distance: self.config.udp.distance,
             keep_alive: self.config.udp.keep_alive_ms as i32,
-            groups_enabled: false,
+            groups_enabled: self.config.groups && !self.v20.contains(&uuid),
             // Only a dedicated server is reached under a configured address.
             voice_host: if self.dedicated {
                 self.config.voice_host.clone()
@@ -111,6 +115,69 @@ impl State {
             message.encode()
         };
         send(host, player, channel::SECRET, body);
+    }
+
+    /// Sends what a group change means to the clients, and tells the voice server.
+    fn apply(&self, host: &mut dyn ServerHost, effects: Vec<Effect>) {
+        if effects.is_empty() {
+            return;
+        }
+        for effect in effects {
+            match effect {
+                Effect::Joined {
+                    player,
+                    group,
+                    wrong_password,
+                } => {
+                    if let Some(player) = host.player(player) {
+                        let body = protocol::encode_joined_group(group, wrong_password);
+                        send(host, player, channel::JOINED_GROUP, body);
+                    }
+                }
+                Effect::Added(group) => self.broadcast_v21(host, channel::ADD_GROUP, &group.encode()),
+                Effect::Removed(id) => {
+                    self.broadcast_v21(host, channel::REMOVE_GROUP, &protocol::encode_remove_group(id))
+                }
+                Effect::State(player) => self.broadcast_state(host, player),
+            }
+        }
+        if let Some(server) = &self.server {
+            server.set_groups(self.groups.membership(&self.states));
+        }
+    }
+
+    /// Sends `body` on `channel` to every compatible client that speaks protocol 21.
+    fn broadcast_v21(&self, host: &mut dyn ServerHost, channel: &str, body: &[u8]) {
+        for uuid in self.compatible.difference(&self.v20) {
+            if let Some(player) = host.player(*uuid) {
+                send(host, player, channel, body.to_vec());
+            }
+        }
+    }
+
+    /// A group message from a client: `set_group`, `create_group` or `leave_group`.
+    fn on_group_message(&mut self, host: &mut dyn ServerHost, uuid: u128, channel: &str, body: &[u8]) {
+        if !self.config.groups || !self.compatible.contains(&uuid) || self.v20.contains(&uuid) {
+            return;
+        }
+        let effects = match channel {
+            channel::SET_GROUP => match protocol::decode_set_group(body) {
+                Ok((group, password)) => {
+                    self.groups
+                        .join(&mut self.states, uuid, group, password.as_deref())
+                }
+                Err(_) => return,
+            },
+            channel::CREATE_GROUP => match protocol::decode_create_group(body) {
+                Ok((name, password, kind)) => {
+                    self.groups
+                        .create(&mut self.states, uuid, &name, password.as_deref(), kind)
+                }
+                Err(_) => return,
+            },
+            _ => self.groups.leave(&mut self.states, uuid),
+        };
+        self.apply(host, effects);
     }
 
     fn start(&mut self, dedicated: bool) {
@@ -194,6 +261,11 @@ impl IPayloadHandler for RequestSecret {
                 protocol::encode_states(&states)
             };
             send(host, player, channel::STATES, body);
+            if version != LEGACY_VERSION && state.config.groups {
+                for group in state.groups.all() {
+                    send(host, player, channel::ADD_GROUP, group.encode());
+                }
+            }
         }
         state.send_secret(host, uuid);
         Ok(())
@@ -229,6 +301,23 @@ impl IPayloadHandler for ClientState {
     }
 }
 
+/// `voicechat:set_group`, `voicechat:create_group` and `voicechat:leave_group`.
+struct GroupMessage(Arc<Inner>, &'static str);
+
+impl IPayloadHandler for GroupMessage {
+    fn handle(
+        &self,
+        bytes: PayloadBytes,
+        context: &mut dyn IPayloadContext,
+    ) -> Result<(), PayloadHandleError> {
+        let uuid = context.player().map_err(failed)?.uuid();
+        let host = context.server_host().map_err(failed)?;
+        let mut state = self.0.0.lock().unwrap();
+        state.on_group_message(host, uuid, self.1, &bytes.0);
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct Mod(Arc<Inner>);
 
@@ -251,11 +340,20 @@ impl Hooks for Mod {
             PayloadId(channel::CLIENT_STATE.into()),
             Some(Arc::new(ClientState(self.0.clone()))),
         );
+        for group_channel in [channel::SET_GROUP, channel::CREATE_GROUP, channel::LEAVE_GROUP] {
+            raw.play_raw(
+                PayloadId(group_channel.into()),
+                Some(Arc::new(GroupMessage(self.0.clone(), group_channel))),
+            );
+        }
         for send_only in [
             channel::SECRET,
             channel::STATE,
             channel::STATES,
             channel::REMOVE_STATE,
+            channel::ADD_GROUP,
+            channel::REMOVE_GROUP,
+            channel::JOINED_GROUP,
         ] {
             raw.play_raw(PayloadId(send_only.into()), None);
         }
@@ -289,6 +387,7 @@ impl Hooks for Mod {
         state.states.clear();
         state.compatible.clear();
         state.v20.clear();
+        state.groups.clear();
     }
 
     fn player_logged_in(&self, host: &mut dyn ServerHost, event: &mut PlayerLoggedInEvent<'_>) {
@@ -312,6 +411,9 @@ impl Hooks for Mod {
                 channel::REMOVE_STATE,
                 &protocol::encode_remove_state(event.player),
             );
+            let State { groups, states, .. } = &mut *state;
+            let effects = groups.clean_up(states);
+            state.apply(host, effects);
         }
     }
 
