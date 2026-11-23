@@ -552,6 +552,174 @@ pub fn decode_client_state(body: &[u8]) -> Result<(bool, bool), WireError> {
     Ok((r.bool()?, r.bool()?))
 }
 
+/// How a group hears the players around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GroupType {
+    /// Members hear each other anywhere, and the players near them as usual.
+    #[default]
+    Normal,
+    /// Like normal, and players nearby outside the group hear the members too.
+    Open,
+    /// Members hear only each other.
+    Isolated,
+}
+
+impl GroupType {
+    pub const ALL: [GroupType; 3] = [GroupType::Normal, GroupType::Open, GroupType::Isolated];
+
+    pub fn code(self) -> i16 {
+        match self {
+            GroupType::Normal => 0,
+            GroupType::Open => 1,
+            GroupType::Isolated => 2,
+        }
+    }
+
+    /// Unknown codes are normal groups, as the original reads them.
+    pub fn from_code(code: i16) -> Self {
+        match code {
+            1 => GroupType::Open,
+            2 => GroupType::Isolated,
+            _ => GroupType::Normal,
+        }
+    }
+}
+
+/// `voicechat:add_group`: a group as clients see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientGroup {
+    pub id: u128,
+    pub name: String,
+    pub has_password: bool,
+    /// Kept when its last member leaves.
+    pub persistent: bool,
+    /// Not listed for players outside it.
+    pub hidden: bool,
+    pub kind: GroupType,
+}
+
+impl ClientGroup {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.uuid(self.id)
+            .string(&self.name)
+            .bool(self.has_password)
+            .bool(self.persistent)
+            .bool(self.hidden)
+            .i16(self.kind.code());
+        w.finish()
+    }
+
+    pub fn decode(body: &[u8]) -> Result<Self, WireError> {
+        let mut r = Reader::new(body);
+        Ok(Self {
+            id: r.uuid()?,
+            name: r.string(super::MAX_GROUP_NAME)?,
+            has_password: r.bool()?,
+            persistent: r.bool()?,
+            hidden: r.bool()?,
+            kind: GroupType::from_code(r.i16()?),
+        })
+    }
+}
+
+/// `voicechat:remove_group`: the group's id.
+pub fn encode_remove_group(id: u128) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.uuid(id);
+    w.finish()
+}
+
+pub fn decode_remove_group(body: &[u8]) -> Result<u128, WireError> {
+    Reader::new(body).uuid()
+}
+
+/// `voicechat:joined_group`: the player's group now, and whether a join failed on its password.
+pub fn encode_joined_group(group: Option<u128>, wrong_password: bool) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.bool(group.is_some());
+    if let Some(group) = group {
+        w.uuid(group);
+    }
+    w.bool(wrong_password);
+    w.finish()
+}
+
+pub fn decode_joined_group(body: &[u8]) -> Result<(Option<u128>, bool), WireError> {
+    let mut r = Reader::new(body);
+    let group = if r.bool()? { Some(r.uuid()?) } else { None };
+    Ok((group, r.bool()?))
+}
+
+/// `voicechat:set_group`: join `group`, with a password when it has one.
+pub fn encode_set_group(group: u128, password: Option<&str>) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.uuid(group).bool(password.is_some());
+    if let Some(password) = password {
+        w.string(password);
+    }
+    w.finish()
+}
+
+pub fn decode_set_group(body: &[u8]) -> Result<(u128, Option<String>), WireError> {
+    let mut r = Reader::new(body);
+    let group = r.uuid()?;
+    let password = if r.bool()? {
+        Some(r.string(super::MAX_GROUP_PASSWORD)?)
+    } else {
+        None
+    };
+    Ok((group, password))
+}
+
+/// `voicechat:create_group`: name, optional password, type.
+pub fn encode_create_group(name: &str, password: Option<&str>, kind: GroupType) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.string(name).bool(password.is_some());
+    if let Some(password) = password {
+        w.string(password);
+    }
+    w.i16(kind.code());
+    w.finish()
+}
+
+pub fn decode_create_group(body: &[u8]) -> Result<(String, Option<String>, GroupType), WireError> {
+    let mut r = Reader::new(body);
+    let name = r.string(super::MAX_GROUP_NAME)?;
+    let password = if r.bool()? {
+        Some(r.string(super::MAX_GROUP_PASSWORD)?)
+    } else {
+        None
+    };
+    Ok((name, password, GroupType::from_code(r.i16()?)))
+}
+
+/// Whether `name` may name a group: 1 to 24 characters, no control or format characters, and
+/// not starting with whitespace.
+pub fn valid_group_name(name: &str) -> bool {
+    let count = name.chars().count();
+    (1..=super::MAX_GROUP_NAME).contains(&count)
+        && !name.chars().next().is_some_and(char::is_whitespace)
+        && name.chars().all(|c| !is_other_char(c))
+}
+
+/// Whether `password` may be a group password: 1 to 256 characters, none of them control or
+/// format characters.
+pub fn valid_group_password(password: &str) -> bool {
+    let count = password.chars().count();
+    (1..=super::MAX_GROUP_PASSWORD).contains(&count) && password.chars().all(|c| !is_other_char(c))
+}
+
+/// Unicode's "other" characters as far as std can tell them: control characters and the
+/// common format and private-use ranges.
+fn is_other_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c as u32,
+            0x00ad | 0x0600..=0x0605 | 0x061c | 0x06dd | 0x070f | 0x180e | 0x200b..=0x200f
+            | 0x202a..=0x202e | 0x2060..=0x2064 | 0x2066..=0x206f | 0xfeff | 0xfff9..=0xfffb
+            | 0xe000..=0xf8ff | 0xf0000..=0x10ffff)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,5 +905,36 @@ mod tests {
         assert_eq!(decode_client_state(&encode_client_state(true, false)), Ok((true, false)));
         assert_eq!(decode_remove_state(&encode_remove_state(9)), Ok(9));
         assert_eq!(decode_request_secret(&encode_request_secret(21)), Ok(21));
+    }
+
+    #[test]
+    fn group_messages_round_trip() {
+        let group = ClientGroup {
+            id: 0xabc,
+            name: "Höhle".into(),
+            has_password: true,
+            persistent: false,
+            hidden: false,
+            kind: GroupType::Isolated,
+        };
+        let body = group.encode();
+        assert_eq!(ClientGroup::decode(&body), Ok(group));
+        // The type is a big-endian short at the end.
+        assert_eq!(&body[body.len() - 2..], &[0, 2]);
+        assert_eq!(decode_joined_group(&encode_joined_group(Some(4), false)), Ok((Some(4), false)));
+        assert_eq!(encode_joined_group(None, true), [0, 1]);
+        assert_eq!(decode_set_group(&encode_set_group(9, Some("pw"))), Ok((9, Some("pw".into()))));
+        assert_eq!(decode_set_group(&encode_set_group(9, None)), Ok((9, None)));
+        assert_eq!(
+            decode_create_group(&encode_create_group("A", None, GroupType::Open)),
+            Ok(("A".into(), None, GroupType::Open))
+        );
+        assert_eq!(decode_remove_group(&encode_remove_group(3)), Ok(3));
+        assert!(valid_group_name("Mine crew"));
+        assert!(!valid_group_name(" leading"));
+        assert!(!valid_group_name(""));
+        assert!(!valid_group_name(&"x".repeat(25)));
+        assert!(!valid_group_password("a\u{7}"));
+        assert!(valid_group_password("geheim 123"));
     }
 }

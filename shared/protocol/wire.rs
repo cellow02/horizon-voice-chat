@@ -56,6 +56,9 @@ impl<'a> Reader<'a> {
     pub fn bool(&mut self) -> Result<bool, WireError> {
         Ok(self.u8()? != 0)
     }
+    pub fn i16(&mut self) -> Result<i16, WireError> {
+        Ok(i16::from_be_bytes(self.array()?))
+    }
     pub fn i32(&mut self) -> Result<i32, WireError> {
         Ok(i32::from_be_bytes(self.array()?))
     }
@@ -128,6 +131,9 @@ impl Writer {
     }
     pub fn bool(&mut self, value: bool) -> &mut Self {
         self.u8(u8::from(value))
+    }
+    pub fn i16(&mut self, value: i16) -> &mut Self {
+        self.raw(&value.to_be_bytes())
     }
     pub fn i32(&mut self, value: i32) -> &mut Self {
         self.raw(&value.to_be_bytes())

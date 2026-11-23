@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copies the shared sources into every mod. A Horizon native mod may not reference files outside
 # its own folder, so each mod carries copies. Run this after editing shared/, or the client's
-# net.rs, mixer.rs and audio.rs, or the server's udp.rs and config.rs.
+# net.rs, mixer.rs and audio.rs, or the server's udp.rs, config.rs and groups.rs.
 #
 #   shared/protocol/        -> the protocol of all four mods
 #   shared/legacy/gcm.rs    -> replaces protocol/gcm.rs in the mods for the older mod API
@@ -42,7 +42,7 @@ done
 for file in net.rs mixer.rs audio.rs; do
     sync "client/src/$file" "legacy/client/api/src/$file"
 done
-for file in udp.rs config.rs; do
+for file in udp.rs config.rs groups.rs; do
     sync "server/src/$file" "legacy/server/api/src/$file"
 done
 exit $status

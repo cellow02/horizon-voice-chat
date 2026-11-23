@@ -78,12 +78,17 @@ pub struct Mixer {
     pub volume: f32,
     /// Nothing is played while true (the player turned voice chat off).
     pub deafened: bool,
+    /// Left and right by direction; off plays everyone in the middle.
+    pub stereo: bool,
+    /// Each player's own volume, 1 when not set.
+    pub player_volumes: HashMap<u128, f32>,
 }
 
 impl Mixer {
     pub fn new() -> Self {
         Self {
             volume: 1.0,
+            stereo: true,
             ..Self::default()
         }
     }
@@ -197,12 +202,19 @@ impl Mixer {
                 speaker.playing = true;
                 speaker.fraction = 0.0;
             }
+            let player = self.player_volumes.get(&speaker.sender).copied().unwrap_or(1.0);
             let [left, right] = match (speaker.place, speaker.position) {
                 (Place::Everywhere, _) => [1.0, 1.0],
                 (Place::Location { at, distance }, _) => gains(&self.listener, at, distance),
                 (Place::Player { distance }, Some(at)) => gains(&self.listener, at, distance),
                 // A player the game does not show us: heard, without distance or direction.
                 (Place::Player { .. }, None) => [0.6, 0.6],
+            };
+            let [left, right] = if self.stereo {
+                [left * player, right * player]
+            } else {
+                let both = (left + right) * 0.5 * player;
+                [both, both]
             };
             for frame in out.chunks_exact_mut(channels) {
                 if speaker.samples.len() < 2 {

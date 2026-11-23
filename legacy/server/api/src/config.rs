@@ -32,6 +32,9 @@ mtu_size = 1024
 
 # Whether clients may record voice chat (clients decide how to honour it).
 allow_recording = true
+
+# Whether players may create and join groups.
+groups = true
 "#;
 
 /// Everything the config file sets.
@@ -41,6 +44,7 @@ pub struct Config {
     pub voice_host: String,
     pub mtu_size: i32,
     pub allow_recording: bool,
+    pub groups: bool,
 }
 
 impl Default for Config {
@@ -50,6 +54,7 @@ impl Default for Config {
             voice_host: String::new(),
             mtu_size: 1024,
             allow_recording: true,
+            groups: true,
         }
     }
 }
@@ -101,6 +106,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
                 .map(|v| config.mtu_size = v)
                 .is_some(),
             "allow_recording" => value.parse().map(|v| config.allow_recording = v).is_ok(),
+            "groups" => value.parse().map(|v| config.groups = v).is_ok(),
             _ => {
                 warnings.push(format!("line {}: unknown key {key:?}", index + 1));
                 continue;

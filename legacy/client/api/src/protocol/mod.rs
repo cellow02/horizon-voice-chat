@@ -45,4 +45,21 @@ pub mod channel {
     pub const REMOVE_STATE: &str = "voicechat:remove_state";
     /// Client to server: the client muted or disabled voice chat.
     pub const CLIENT_STATE: &str = "voicechat:client_state";
+    /// Server to client: a group exists (or changed).
+    pub const ADD_GROUP: &str = "voicechat:add_group";
+    /// Server to client: a group is gone.
+    pub const REMOVE_GROUP: &str = "voicechat:remove_group";
+    /// Server to client: the group the player is in now, or a wrong password.
+    pub const JOINED_GROUP: &str = "voicechat:joined_group";
+    /// Client to server: join a group.
+    pub const SET_GROUP: &str = "voicechat:set_group";
+    /// Client to server: create a group and join it.
+    pub const CREATE_GROUP: &str = "voicechat:create_group";
+    /// Client to server: leave the group.
+    pub const LEAVE_GROUP: &str = "voicechat:leave_group";
 }
+
+/// Longest group name, in characters.
+pub const MAX_GROUP_NAME: usize = 24;
+/// Longest group password, in characters.
+pub const MAX_GROUP_PASSWORD: usize = 256;
